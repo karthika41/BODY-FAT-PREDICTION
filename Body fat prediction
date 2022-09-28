@@ -1,0 +1,878 @@
+# Packages and Libraries
+
+```{r, warning = FALSE, message = FALSE, error = FALSE}
+library(tidyverse)
+library(ggplot2)
+library(wesanderson)
+library(ggpubr)
+library(tidymodels)
+library(corrplot)
+library(gridExtra)
+library(kableExtra)
+set.seed(19970507)
+```
+```{r, echo = FALSE, warning = FALSE, message = FALSE, error = FALSE}
+
+```
+# Data Import and Checks
+
+```{r, warning = FALSE, message = FALSE, error = FALSE}
+df <- read_csv('../input/body-fat-prediction-dataset/bodyfat.csv')
+Density <- df %>% select(Density) # Save for comparisons later
+df <- df %>% select(-Density)
+```
+```{r, warning = FALSE, message = FALSE, error = FALSE}
+summary(df)
+# Exmaine implausible measurements 
+df %>% filter(BodyFat == 0) 
+df %>% filter(Height == 29.5) 
+
+# Remove subjects with impossible body fat and implausible height
+df <- df %>% filter(Height != 29.5) %>% filter(BodyFat >= 2)
+
+# No missing values
+sum(is.na(df))
+
+# Splitting
+set.seed(19970507)
+
+df_split <- initial_split(df)
+df_train <- training(df_split)
+df_test <- testing(df_split)
+cv_folds <- vfold_cv(df_train, v = 10)
+```
+
+## BodyFat
+
+It can be observed that the distribution of the outcome, BodyFat, is fairly bell shaped. There is one person who is an extreme outlier. 
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, error = FALSE}
+BodyFat_plt1 <- df_train %>%
+                ggplot() +
+                geom_histogram(aes(x = BodyFat), fill = wes_palette("Royal2")[4], color = "black", binwidth = 3) +
+                theme_minimal() +
+                theme(plot.title = element_text(size = 15, face = "bold")) +
+                labs(title = "Body Fat Percentage Distribution", x = "Body Fat %", y = "Count")
+
+BodyFat_plt2 <- df_train %>%
+                ggplot() +
+                geom_boxplot(aes(x = "", y = BodyFat), fill = wes_palette("Royal2")[3]) +
+                coord_flip() +
+                theme_minimal() +
+                labs(title = "", x = "", y = "Body Fat %")
+
+ggarrange(BodyFat_plt1, BodyFat_plt2,
+          ncol = 1,
+          nrow = 2)
+```
+
+## Age
+
+There is little of note with the Age variable. Unsurprisingly it is not highly correlated with the outcome. 
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, error = FALSE, fig.dim = c(8, 10)}
+Age_plt1 <- df_train %>%
+            ggplot() +
+            geom_point(aes(x = Age, y = BodyFat), color = wes_palette("Royal2")[5], size = 3, shape = 17) +
+            annotate("text", x = 65, y = 40, label = paste0("Correlation: ", round(cor(df_train$Age, df_train$BodyFat), 2))) +
+            theme_minimal() +
+            theme(plot.title = element_text(size = 15, face = "bold")) +
+            labs(title = "Body Fat Percentage by Age", x = "Age", y = "Body Fat %")
+
+Age_plt2 <- df_train %>%
+            ggplot() +
+            geom_histogram(aes(x = Age), fill = wes_palette("Royal2")[4], color = "black", binwidth = 10) +
+            annotate("text", x = 80, y = 70, label = paste0("Min: ", round(min(df_train$Age), 2))) +
+            annotate("text", x = 80, y = 64, label = paste0("1q: ", round(quantile(df_train$Age, .25), 2))) +
+            annotate("text", x = 80, y = 58, label = paste0("Med: ", round(median(df_train$Age), 2))) +
+            annotate("text", x = 80, y = 52, label = paste0("Mean: ", round(mean(df_train$Age), 2))) +
+            annotate("text", x = 80, y = 46, label = paste0("3q: ", round(quantile(df_train$Age, .75), 2))) +
+            annotate("text", x = 80, y = 40, label = paste0("Max: ", round(max(df_train$Age), 2))) +
+            theme_minimal() +
+            theme(plot.title = element_text(size = 15, face = "bold")) +
+            labs(title = "Distribution of Age", x = "Age", y = "Count")
+
+Age_plt3 <- df_train %>%
+            ggplot() +
+            geom_boxplot(aes(x = "", y = Age), fill = wes_palette("Royal2")[3]) +
+            coord_flip() +
+            theme_minimal() +
+            labs(title = "", x = "", y = "Age")
+
+ggarrange(Age_plt1, Age_plt2, Age_plt3,
+          ncol = 1,
+          nrow = 3)
+```
+
+## Weight
+
+Under weight we can see one **extreme** outlier. Otherwise the distribution is bell shaped. Later during pre-processing the outlier
+(who is a single person and accounts for outlier values in many other features) will be removed.
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, error = FALSE, fig.dim = c(8, 10)}
+Weight_plt1 <- df_train %>%
+               ggplot() +
+               geom_point(aes(x = Weight, y = BodyFat), color = wes_palette("Royal2")[5], size = 3, shape = 17) +
+               annotate("text", x = 340, y = 40, label = paste0("Correlation: ", round(cor(df_train$Weight, df_train$BodyFat), 2))) +
+               theme_minimal() +
+               theme(plot.title = element_text(size = 15, face = "bold")) + 
+               labs(title = "Body Fat Percentage by Weight", x = "Weight (lbs)", y = "Body Fat %")
+
+Weight_plt2 <- df_train %>%
+               ggplot() +
+               geom_histogram(aes(x = Weight), fill = wes_palette("Royal2")[4], color = "black", binwidth = 10) +
+               annotate("text", x = 350, y = 35, label = paste0("Min: ", round(min(df_train$Weight), 2))) +
+               annotate("text", x = 350, y = 32, label = paste0("1q: ", round(quantile(df_train$Weight, .25), 2))) +
+               annotate("text", x = 350, y = 29, label = paste0("Med: ", round(median(df_train$Weight), 2))) +
+               annotate("text", x = 350, y = 26, label = paste0("Mean: ", round(mean(df_train$Weight), 2))) +
+               annotate("text", x = 350, y = 23, label = paste0("3q: ", round(quantile(df_train$Weight, .75), 2))) +
+               annotate("text", x = 350, y = 20, label = paste0("Max: ", round(max(df_train$Weight), 2))) +
+               theme_minimal() +
+               theme(plot.title = element_text(size = 15, face = "bold")) +
+               labs(title = "Distribution of Weight", x = "Weight (lbs)", y = "Count")
+
+Weight_plt3 <- df_train %>%
+               ggplot() +
+               geom_boxplot(aes(x = "", y = Weight), fill = wes_palette("Royal2")[3]) +
+               coord_flip() +
+               theme_minimal() +
+               labs(title = "", x = "", y = "Weight (lbs)")
+
+ggarrange(Weight_plt1, Weight_plt2, Weight_plt3,
+          ncol = 1,
+          nrow = 3)
+```
+
+## Height
+
+The height variable as essentially no correlation with the outcome. 
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, error = FALSE, fig.dim = c(8, 10)}
+Height_plt1 <- df_train %>%
+               ggplot() +
+               geom_point(aes(x = Height, y = BodyFat), color = wes_palette("Royal2")[5], size = 3, shape = 17) +
+               annotate("text", x = 76, y = 45, label = paste0("Correlation: ", round(cor(df_train$Height, df_train$BodyFat), 2))) +
+               theme_minimal() +
+               theme(plot.title = element_text(size = 15, face = "bold")) +
+               labs(title = "Body Fat Percentage by Height", x = "Height (inches)", y = "Body Fat %")
+
+Height_plt2 <- df_train %>%
+               ggplot() +
+               geom_histogram(aes(x = Height), fill = wes_palette("Royal2")[4], color = "black", binwidth = 2) +
+               annotate("text", x = 77, y = 60, label = paste0("Min: ", round(min(df_train$Height), 2))) +
+               annotate("text", x = 77, y = 55, label = paste0("1q: ", round(quantile(df_train$Height, .25), 2))) +
+               annotate("text", x = 77, y = 50, label = paste0("Med: ", round(median(df_train$Height), 2))) +
+               annotate("text", x = 77, y = 45, label = paste0("Mean: ", round(mean(df_train$Height), 2))) +
+               annotate("text", x = 77, y = 40, label = paste0("3q: ", round(quantile(df_train$Height, .75), 2))) +
+               annotate("text", x = 77, y = 35, label = paste0("Max: ", round(max(df_train$Height), 2))) +
+               theme_minimal() +
+               theme(plot.title = element_text(size = 15, face = "bold")) +
+               labs(title = "Distribution of Height", x = "Height (inches)", y = "Count")
+
+Height_plt3 <- df_train %>%
+               ggplot() +
+               geom_boxplot(aes(x = "", y = Height), fill = wes_palette("Royal2")[3]) +
+               coord_flip() +
+               theme_minimal() +
+               labs(title = "", x = "", y = "Height (inches)") 
+
+ggarrange(Height_plt1, Height_plt2, Height_plt3,
+          ncol = 1,
+          nrow = 3)
+```
+
+
+## Neck
+
+The same person who was an outlier for weight appears here again. 
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, error = FALSE, fig.dim = c(8, 10)}
+Neck_plt1 <- df_train %>%
+             ggplot() +
+             geom_point(aes(x = Neck, y = BodyFat), color = wes_palette("Royal2")[5], size = 3, shape = 17) +
+             annotate("text", x = 48, y = 40, label = paste0("Correlation: ", round(cor(df_train$Neck, df_train$BodyFat), 2))) +
+             theme_minimal() +
+             theme(plot.title = element_text(size = 15, face = "bold")) +
+             labs(title = "Body Fat Percentage by Neck Circumference", x = "Neck Circumference (cm)", y = "Body Fat %")
+
+Neck_plt2 <- df_train %>%
+             ggplot() +
+             geom_histogram(aes(x = Neck), fill = wes_palette("Royal2")[4], color = "black", binwidth = 2) +
+             annotate("text", x = 50, y = 75, label = paste0("Min: ", round(min(df_train$Neck), 2))) +
+             annotate("text", x = 50, y = 68, label = paste0("1q: ", round(quantile(df_train$Neck, .25), 2))) +
+             annotate("text", x = 50, y = 61, label = paste0("Med: ", round(median(df_train$Neck), 2))) +
+             annotate("text", x = 50, y = 54, label = paste0("Mean: ", round(mean(df_train$Neck), 2))) +
+             annotate("text", x = 50, y = 47, label = paste0("3q: ", round(quantile(df_train$Neck, .75), 2))) +
+             annotate("text", x = 50, y = 40, label = paste0("Max: ", round(max(df_train$Neck), 2))) +
+             theme_minimal() +
+             theme(plot.title = element_text(size = 15, face = "bold")) +
+             labs(title = "Distribution of Neck Circumference", x = "Neck Circumference (cm)", y = "Count")
+
+Neck_plt3 <- df_train %>%
+             ggplot() +
+             geom_boxplot(aes(x = "", y = Neck), fill = wes_palette("Royal2")[3]) +
+             coord_flip() +
+             theme_minimal() +
+             labs(title = "", x = "", y = "Neck Circumference (cm)")
+
+ggarrange(Neck_plt1, Neck_plt2, Neck_plt3,
+          ncol = 1,
+          nrow = 3)
+```
+
+## Chest
+
+The Chest feature is somewhat right skew with some outliers on the high end of the range. 
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, error = FALSE, fig.dim = c(8, 10)}
+Chest_plt1 <- df_train %>%
+              ggplot() +
+              geom_point(aes(x = Chest, y = BodyFat), color = wes_palette("Royal2")[5], size = 3, shape = 17) +
+              annotate("text", x = 130, y = 20, label = paste0("Correlation: ", round(cor(df_train$Chest, df_train$BodyFat), 2))) +
+              theme_minimal() +
+              theme(plot.title = element_text(size = 15, face = "bold")) +
+              labs(title = "Body Fat Percentage by Chest Circumference", x = "Chest Circumference (cm)", y = "Body Fat %")
+
+Chest_plt2 <- df_train %>%
+              ggplot() +
+              geom_histogram(aes(x = Chest), fill = wes_palette("Royal2")[4], color = "black", binwidth = 2) +
+              annotate("text", x = 130, y = 27, label = paste0("Min: ", round(min(df_train$Chest), 2))) +
+              annotate("text", x = 130, y = 25, label = paste0("1q: ", round(quantile(df_train$Chest, .25), 2))) +
+              annotate("text", x = 130, y = 23, label = paste0("Med: ", round(median(df_train$Chest), 2))) +
+              annotate("text", x = 130, y = 21, label = paste0("Mean: ", round(mean(df_train$Chest), 2))) +
+              annotate("text", x = 130, y = 19, label = paste0("3q: ", round(quantile(df_train$Chest, .75), 2))) +
+              annotate("text", x = 130, y = 17, label = paste0("Max: ", round(max(df_train$Chest), 2))) +
+              theme_minimal() +
+              theme(plot.title = element_text(size = 15, face = "bold")) +
+              labs(title = "Distribution of Chest Circumference", x = "Chest Circumference (cm)", y = "Count")
+
+Chest_plt3 <- df_train %>%
+              ggplot() +
+              geom_boxplot(aes(x = "", y = Chest), fill = wes_palette("Royal2")[3]) +
+              coord_flip() +
+              theme_minimal() +
+              labs(title = "", x = "", y = "Chest Circumference (cm)")
+
+ggarrange(Chest_plt1, Chest_plt2, Chest_plt3,
+          ncol = 1,
+          nrow = 3)
+```
+
+## Abdomen
+
+The abdomen feature is also somewhat right skew with outliers on the high end of its range. 
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, error = FALSE, fig.dim = c(8, 10)}
+Abdomen_plt1 <- df_train %>%
+                ggplot() +
+                geom_point(aes(x = Abdomen, y = BodyFat), color = wes_palette("Royal2")[5], size = 3, shape = 17) +
+                annotate("text", x = 140, y = 20, label = paste0("Correlation: ", round(cor(df_train$Abdomen, df_train$BodyFat), 2))) +
+                theme_minimal() +
+                theme(plot.title = element_text(size = 15, face = "bold")) +
+                labs(title = "Body Fat Percentage by Abdomen Circumference", x = "Abdomen Circumference (cm)", y = "Body Fat %")
+
+Abdomen_plt2 <- df_train %>%
+                ggplot() +
+                geom_histogram(aes(x = Abdomen), fill = wes_palette("Royal2")[4], color = "black", binwidth = 2) +
+                annotate("text", x = 140, y = 24, label = paste0("Min: ", round(min(df_train$Abdomen), 2))) +
+                annotate("text", x = 140, y = 22, label = paste0("1q: ", round(quantile(df_train$Abdomen, .25), 2))) +
+                annotate("text", x = 140, y = 20, label = paste0("Med: ", round(median(df_train$Abdomen), 2))) +
+                annotate("text", x = 140, y = 18, label = paste0("Mean: ", round(mean(df_train$Abdomen), 2))) +
+                annotate("text", x = 140, y = 16, label = paste0("3q: ", round(quantile(df_train$Abdomen, .75), 2))) +
+                annotate("text", x = 140, y = 14, label = paste0("Max: ", round(max(df_train$Abdomen), 2))) +
+                theme_minimal() +
+                theme(plot.title = element_text(size = 15, face = "bold")) +
+                labs(title = "Distribution of Abdomen Circumference", x = "Abdomen Circumference (cm)", y = "Count")
+
+Abdomen_plt3 <- df_train %>%
+                ggplot() +
+                geom_boxplot(aes(x = "", y = Abdomen), fill = wes_palette("Royal2")[3]) +
+                coord_flip() +
+                theme_minimal() +
+                labs(title = "", x = "", y = "Abdomen Circumference (cm)")
+
+ggarrange(Abdomen_plt1, Abdomen_plt2, Abdomen_plt3,
+          ncol = 1,
+          nrow = 3)
+```
+
+## Hip
+
+The Hip feature has two outliers, the most extreme of which is the same person we have seen in other features such as weight. 
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, error = FALSE, fig.dim = c(8, 10)}
+Hip_plt1 <- df_train %>%
+            ggplot() +
+            geom_point(aes(x = Hip, y = BodyFat), color = wes_palette("Royal2")[5], size = 3, shape = 17) +
+            annotate("text", x = 140, y = 20, label = paste0("Correlation: ", round(cor(df_train$Hip, df_train$BodyFat), 2))) +
+            theme_minimal() +
+            theme(plot.title = element_text(size = 15, face = "bold")) +
+            labs(title = "Body Fat Percentage by Hip Circumference", x = "Hip Circumference (cm)", y = "Body Fat %")
+
+Hip_plt2 <- df_train %>%
+            ggplot() +
+            geom_histogram(aes(x = Hip), fill = wes_palette("Royal2")[4], color = "black", binwidth = 2) +
+            annotate("text", x = 140, y = 35, label = paste0("Min: ", round(min(df_train$Hip), 2))) +
+            annotate("text", x = 140, y = 32, label = paste0("1q: ", round(quantile(df_train$Hip, .25), 2))) +
+            annotate("text", x = 140, y = 29, label = paste0("Med: ", round(median(df_train$Hip), 2))) +
+            annotate("text", x = 140, y = 26, label = paste0("Mean: ", round(mean(df_train$Hip), 2))) +
+            annotate("text", x = 140, y = 23, label = paste0("3q: ", round(quantile(df_train$Hip, .75), 2))) +
+            annotate("text", x = 140, y = 20, label = paste0("Max: ", round(max(df_train$Hip), 2))) +
+            theme_minimal() +
+            theme(plot.title = element_text(size = 15, face = "bold")) +
+            labs(title = "Distribution of Hip Circumference", x = "Hip Circumference (cm)", y = "Count")
+
+Hip_plt3 <- df_train %>%
+            ggplot() +
+            geom_boxplot(aes(x = "", y = Hip), fill = wes_palette("Royal2")[3]) +
+            coord_flip() +
+            theme_minimal() +
+            labs(title = "", x = "", y = "Hip Circumference (cm)")
+
+ggarrange(Hip_plt1, Hip_plt2, Hip_plt3,
+          ncol = 1,
+          nrow = 3)
+```
+
+## Thigh
+
+Another bell shaped feature with a few outliers, one of which is extreme. 
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, error = FALSE, fig.dim = c(8, 10)}
+Thigh_plt1 <- df_train %>%
+              ggplot() +
+              geom_point(aes(x = Thigh, y = BodyFat), color = wes_palette("Royal2")[5], size = 3, shape = 17) +
+              annotate("text", x = 83, y = 30, label = paste0("Correlation: ", round(cor(df_train$Thigh, df_train$BodyFat), 2))) +
+              theme_minimal() +
+              theme(plot.title = element_text(size = 15, face = "bold")) +
+              labs(title = "Body Fat Percentage by Thigh Circumference", x = "Thigh Circumference (cm)", y = "Body Fat %")
+
+Thigh_plt2 <- df_train %>%
+              ggplot() +
+              geom_histogram(aes(x = Thigh), fill = wes_palette("Royal2")[4], color = "black", binwidth = 2) +
+              annotate("text", x = 85, y = 35, label = paste0("Min: ", round(min(df_train$Thigh), 2))) +
+              annotate("text", x = 85, y = 31, label = paste0("1q: ", round(quantile(df_train$Thigh, .25), 2))) +
+              annotate("text", x = 85, y = 27, label = paste0("Med: ", round(median(df_train$Thigh), 2))) +
+              annotate("text", x = 85, y = 23, label = paste0("Mean: ", round(mean(df_train$Thigh), 2))) +
+              annotate("text", x = 85, y = 19, label = paste0("3q: ", round(quantile(df_train$Thigh, .75), 2))) +
+              annotate("text", x = 85, y = 15, label = paste0("Max: ", round(max(df_train$Thigh), 2))) +
+              theme_minimal() +
+              theme(plot.title = element_text(size = 15, face = "bold")) +
+              labs(title = "Distribution of Thigh Circumference", x = "Thigh Circumference (cm)", y = "Count")
+
+Thigh_plt3 <- df_train %>%
+              ggplot() +
+              geom_boxplot(aes(x = "", y = Thigh), fill = wes_palette("Royal2")[3]) +
+              coord_flip() +
+              theme_minimal() +
+              labs(title = "", x = "", y = "Thigh Circumference (cm)")
+
+ggarrange(Thigh_plt1, Thigh_plt2, Thigh_plt3,
+          ncol = 1,
+          nrow = 3)
+```
+
+## Knee
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, error = FALSE, fig.dim = c(8, 10)}
+Knee_plt1 <- df_train %>%
+             ggplot() +
+             geom_point(aes(x = Knee, y = BodyFat), color = wes_palette("Royal2")[5], size = 3, shape = 17) +
+             annotate("text", x = 48, y = 25, label = paste0("Correlation: ", round(cor(df_train$Knee, df_train$BodyFat), 2))) +
+             theme_minimal() +
+             theme(plot.title = element_text(size = 15, face = "bold")) +
+             labs(title = "Body Fat Percentage by Knee Circumference", x = "Knee Circumference (cm)", y = "Body Fat %")
+
+Knee_plt2 <- df_train %>%
+             ggplot() +
+             geom_histogram(aes(x = Knee), fill = wes_palette("Royal2")[4], color = "black", binwidth = 2) +
+             annotate("text", x = 50, y = 70, label = paste0("Min: ", round(min(df_train$Knee), 2))) +
+             annotate("text", x = 50, y = 64, label = paste0("1q: ", round(quantile(df_train$Knee, .25), 2))) +
+             annotate("text", x = 50, y = 58, label = paste0("Med: ", round(median(df_train$Knee), 2))) +
+             annotate("text", x = 50, y = 52, label = paste0("Mean: ", round(mean(df_train$Knee), 2))) +
+             annotate("text", x = 50, y = 46, label = paste0("3q: ", round(quantile(df_train$Knee, .75), 2))) +
+             annotate("text", x = 50, y = 40, label = paste0("Max: ", round(max(df_train$Knee), 2))) +
+             theme_minimal() +
+             theme(plot.title = element_text(size = 15, face = "bold")) +
+             labs(title = "Distribution of Knee Circumference", x = "Knee Circumference (cm)", y = "Count")
+
+Knee_plt3 <- df_train %>%
+             ggplot() +
+             geom_boxplot(aes(x = "", y = Knee), fill = wes_palette("Royal2")[3]) +
+             coord_flip() +
+             theme_minimal() +
+             labs(title = "", x = "", y = "Knee Circumference (cm)")
+
+ggarrange(Knee_plt1, Knee_plt2, Knee_plt3,
+          ncol = 1,
+          nrow = 3)
+```
+
+## Ankle
+
+For ankle circumference there exist outliers on both ends of the distribution. 
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, error = FALSE, fig.dim = c(8, 10)}
+Ankle_plt1 <- df_train %>%
+              ggplot() +
+              geom_point(aes(x = Ankle, y = BodyFat), color = wes_palette("Royal2")[5], size = 3, shape = 17) +
+              annotate("text", x = 32, y = 40, label = paste0("Correlation: ", round(cor(df_train$Ankle, df_train$BodyFat), 2))) +
+              theme_minimal() +
+              theme(plot.title = element_text(size = 15, face = "bold")) +
+              labs(title = "Body Fat Percentage by Ankle Circumference", x = "Ankle Circumference (cm)", y = "Body Fat %")
+
+Ankle_plt2 <- df_train %>%
+              ggplot() +
+              geom_histogram(aes(x = Ankle), fill = wes_palette("Royal2")[4], color = "black", binwidth = 1) +
+              annotate("text", x = 33, y = 60, label = paste0("Min: ", round(min(df_train$Ankle), 2))) +
+              annotate("text", x = 33, y = 54, label = paste0("1q: ", round(quantile(df_train$Ankle, .25), 2))) +
+              annotate("text", x = 33, y = 48, label = paste0("Med: ", round(median(df_train$Ankle), 2))) +
+              annotate("text", x = 33, y = 42, label = paste0("Mean: ", round(mean(df_train$Ankle), 2))) +
+              annotate("text", x = 33, y = 36, label = paste0("3q: ", round(quantile(df_train$Ankle, .75), 2))) +
+              annotate("text", x = 33, y = 30, label = paste0("Max: ", round(max(df_train$Ankle), 2))) +
+              theme_minimal() +
+              theme(plot.title = element_text(size = 15, face = "bold")) +
+              labs(title = "Distribution of Ankle Circumference", x = "Ankle Circumference (cm)", y = "Count")
+
+Ankle_plt3 <- df_train %>%
+              ggplot() +
+              geom_boxplot(aes(x = "", y = Ankle), fill = wes_palette("Royal2")[3]) +
+              coord_flip() +
+              theme_minimal() +
+              labs(title = "", x = "", y = "Ankle Circumference (cm)")
+
+ggarrange(Ankle_plt1, Ankle_plt2, Ankle_plt3,
+          ncol = 1,
+          nrow = 3)
+```
+
+## Biceps
+
+Our favorite extreme outlier is back at it again!
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, error = FALSE, fig.dim = c(8, 10)}
+Biceps_plt1 <- df_train %>%
+               ggplot() +
+               geom_point(aes(x = Biceps, y = BodyFat), color = wes_palette("Royal2")[5], size = 3, shape = 17) +
+               annotate("text", x = 42, y = 43, label = paste0("Correlation: ", round(cor(df_train$Biceps, df_train$BodyFat), 2))) +
+               theme_minimal() +
+               theme(plot.title = element_text(size = 15, face = "bold")) +
+               labs(title = "Body Fat Percentage by Bicep Circumference", x = "Bicep Circumference (cm)", y = "Body Fat %")
+
+Biceps_plt2 <- df_train %>%
+               ggplot() +
+               geom_histogram(aes(x = Biceps), fill = wes_palette("Royal2")[4], color = "black", binwidth = 1) +
+               annotate("text", x = 43, y = 30, label = paste0("Min: ", round(min(df_train$Biceps), 2))) +
+               annotate("text", x = 43, y = 27, label = paste0("1q: ", round(quantile(df_train$Biceps, .25), 2))) +
+               annotate("text", x = 43, y = 24, label = paste0("Med: ", round(median(df_train$Biceps), 2))) +
+               annotate("text", x = 43, y = 21, label = paste0("Mean: ", round(mean(df_train$Biceps), 2))) +
+               annotate("text", x = 43, y = 18, label = paste0("3q: ", round(quantile(df_train$Biceps, .75), 2))) +
+               annotate("text", x = 43, y = 15, label = paste0("Max: ", round(max(df_train$Biceps), 2))) +
+               theme_minimal() +
+               theme(plot.title = element_text(size = 15, face = "bold")) +
+               labs(title = "Distribution of Bicep Circumference", x = "Bicep Circumference (cm)", y = "Count")
+
+Biceps_plt3 <- df_train %>%
+               ggplot() +
+               geom_boxplot(aes(x = "", y = Biceps), fill = wes_palette("Royal2")[3]) +
+               coord_flip() +
+               theme_minimal() +
+               labs(title = "", x = "", y = "Bicep Circumference (cm)")
+
+ggarrange(Biceps_plt1, Biceps_plt2, Biceps_plt3,
+          ncol = 1,
+          nrow = 3)
+```
+
+## Forearm
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, error = FALSE, fig.dim = c(8, 10)}
+Forearm_plt1 <- df_train %>%
+                ggplot() +
+                geom_point(aes(x = Forearm, y = BodyFat), color = wes_palette("Royal2")[5], size = 3, shape = 17) +
+                annotate("text", x = 33, y = 43, label = paste0("Correlation: ", round(cor(df_train$Forearm, df_train$BodyFat), 2))) +
+                theme_minimal() +
+                theme(plot.title = element_text(size = 15, face = "bold")) +
+                labs(title = "Body Fat Percentage by Forearm Circumference", x = "Forearm Circumference (cm)", y = "Body Fat %")
+
+Forearm_plt2 <- df_train %>%
+                ggplot() +
+                geom_histogram(aes(x = Forearm), fill = wes_palette("Royal2")[4], color = "black", binwidth = 1) +
+                annotate("text", x = 34, y = 45, label = paste0("Min: ", round(min(df_train$Forearm), 2))) +
+                annotate("text", x = 34, y = 41, label = paste0("1q: ", round(quantile(df_train$Forearm, .25), 2))) +
+                annotate("text", x = 34, y = 37, label = paste0("Med: ", round(median(df_train$Forearm), 2))) +
+                annotate("text", x = 34, y = 33, label = paste0("Mean: ", round(mean(df_train$Forearm), 2))) +
+                annotate("text", x = 34, y = 29, label = paste0("3q: ", round(quantile(df_train$Forearm, .75), 2))) +
+                annotate("text", x = 34, y = 25, label = paste0("Max: ", round(max(df_train$Forearm), 2))) +
+                theme_minimal() +
+                theme(plot.title = element_text(size = 15, face = "bold")) +
+                labs(title = "Distribution of Forearm Circumference", x = "Forearm Circumference (cm)", y = "Count")
+
+Forearm_plt3 <- df_train %>%
+                ggplot() +
+                geom_boxplot(aes(x = "", y = Forearm), fill = wes_palette("Royal2")[3]) +
+                coord_flip() +
+                theme_minimal() +
+                labs(title = "", x = "", y = "Forearm Circumference (cm)")
+
+ggarrange(Forearm_plt1, Forearm_plt2, Forearm_plt3,
+          ncol = 1,
+          nrow = 3)
+```
+
+## Wrist
+
+```{r,echo = FALSE,  warning = FALSE, message = FALSE, error = FALSE, fig.dim = c(8, 10)}
+Wrist_plt1 <- df_train %>%
+              ggplot() +
+              geom_point(aes(x = Wrist, y = BodyFat), color = wes_palette("Royal2")[5], size = 3, shape = 17) +
+              annotate("text", x = 21, y = 43, label = paste0("Correlation: ", round(cor(df_train$Wrist, df_train$BodyFat), 2))) +
+              theme_minimal() +
+              theme(plot.title = element_text(size = 15, face = "bold")) +
+              labs(title = "Body Fat Percentage by Wrist Circumference", x = "Wrist Circumference (cm)", y = "Body Fat %")
+
+Wrist_plt2 <- df_train %>%
+              ggplot() +
+              geom_histogram(aes(x = Wrist), fill = wes_palette("Royal2")[4], color = "black", binwidth = 0.5) +
+              annotate("text", x = 21, y = 90, label = paste0("Min: ", round(min(df_train$Wrist), 2))) +
+              annotate("text", x = 21, y = 83, label = paste0("1q: ", round(quantile(df_train$Wrist, .25), 2))) +
+              annotate("text", x = 21, y = 76, label = paste0("Med: ", round(median(df_train$Wrist), 2))) +
+              annotate("text", x = 21, y = 69, label = paste0("Mean: ", round(mean(df_train$Wrist), 2))) +
+              annotate("text", x = 21, y = 62, label = paste0("3q: ", round(quantile(df_train$Wrist, .75), 2))) +
+              annotate("text", x = 21, y = 55, label = paste0("Max: ", round(max(df_train$Wrist), 2))) +
+              theme_minimal() +
+              theme(plot.title = element_text(size = 15, face = "bold")) +
+              labs(title = "Distribution of Wrist Circumference", x = "Wrist Circumference (cm)", y = "Count")
+
+Wrist_plt3 <- df_train %>%
+              ggplot() +
+              geom_boxplot(aes(x = "", y = Wrist), fill = wes_palette("Royal2")[3]) +
+              coord_flip() +
+              theme_minimal() +
+              labs(title = "", x = "", y = "Wrist Circumference (cm)")
+
+ggarrange(Wrist_plt1, Wrist_plt2, Wrist_plt3,
+          ncol = 1,
+          nrow = 3)
+```
+
+## Correlations
+
+
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, error = FALSE, fig.dim = c(8, 10)}
+corrplot(cor(df_train), 
+         type = "upper", 
+         order = "original", 
+         method = "shade",
+         tl.col = "black", 
+         tl.srt = 45,
+         addCoef.col = "black",
+         diag = FALSE)
+```
+
+# Feature Screening
+
+
+    + BMI_crude: weight (kg) / height^2 (m)
+    + chab: ratio of chest over abdomen circumference
+        
+## Univariate Linear Regression Models
+
+
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, error = FALSE, fig.dim = c(8, 10)}
+# Linear Models
+Age_lm <- lm(BodyFat ~ Age, data = df_train)
+Weight_lm <- lm(BodyFat ~ Weight, data = df_train)
+Height_lm <- lm(BodyFat ~ Height, data = df_train)
+Neck_lm <- lm(BodyFat ~ Neck, data = df_train)
+Chest_lm <- lm(BodyFat ~ Chest, data = df_train)
+Abdomen_lm <- lm(BodyFat ~ Abdomen, data = df_train)
+Hip_lm <- lm(BodyFat ~ Hip, data = df_train)
+Thigh_lm <- lm(BodyFat ~ Thigh, data = df_train)
+Knee_lm <- lm(BodyFat ~ Knee, data = df_train)
+Ankle_lm <- lm(BodyFat ~ Ankle, data = df_train)
+Biceps_lm <- lm(BodyFat ~ Biceps, data = df_train)
+Forearm_lm <- lm(BodyFat ~ Forearm, data = df_train)
+Wrist_lm <- lm(BodyFat ~ Wrist, data = df_train)
+
+# pvals: only one not significant is height 
+Age_pval <- summary(Age_lm)$coefficients[2,4]
+Weight_pval <- summary(Weight_lm)$coefficients[2,4]
+Height_pval <- summary(Height_lm)$coefficients[2,4] # Not significant
+Neck_pval <- summary(Neck_lm)$coefficients[2,4]
+Chest_pval <- summary(Chest_lm)$coefficients[2,4]
+Abdomen_pval <- summary(Abdomen_lm)$coefficients[2,4]
+Hip_pval <- summary(Hip_lm)$coefficients[2,4]
+Thigh_pval <- summary(Thigh_lm)$coefficients[2,4]
+Knee_pval <- summary(Knee_lm)$coefficients[2,4]
+Ankle_pval <- summary(Ankle_lm)$coefficients[2,4]
+Biceps_pval <- summary(Biceps_lm)$coefficients[2,4]
+Forearm_pval <- summary(Forearm_lm)$coefficients[2,4]
+Wrist_pval <- summary(Wrist_lm)$coefficients[2,4]
+
+# Rsq
+Age_rsq <- summary(Age_lm)$r.squared
+Weight_rsq <- summary(Weight_lm)$r.squared 
+Height_rsq <- summary(Height_lm)$r.squared
+Neck_rsp <- summary(Neck_lm)$r.squared 
+Chest_rsp <- summary(Chest_lm)$r.squared # .46!!!!!!!!!
+Abdomen_rsq <- summary(Abdomen_lm)$r.squared # .63!!!!!!!!!!!
+Hip_rsq <- summary(Hip_lm)$r.squared 
+Thigh_rsq <- summary(Thigh_lm)$r.squared
+Knee_rsq <- summary(Knee_lm)$r.squared
+Ankle_rsq <- summary(Ankle_lm)$r.squared 
+Biceps_rsq <-  summary(Biceps_lm)$r.squared
+Forearm_rsq <- summary(Forearm_lm)$r.squared 
+Wrist_rsq <- summary(Wrist_lm)$r.squared 
+
+# Coefficients
+Age_coef <- summary(Age_lm)$coefficients[2,1]
+Weight_coef <- summary(Weight_lm)$coefficients[2,1]
+Height_coef <- summary(Height_lm)$coefficients[2,1] 
+Neck_coef <- summary(Neck_lm)$coefficients[2,1]
+Chest_coef <- summary(Chest_lm)$coefficients[2,1]
+Abdomen_coef <- summary(Abdomen_lm)$coefficients[2,1]
+Hip_coef <- summary(Hip_lm)$coefficients[2,1]
+Thigh_coef <- summary(Thigh_lm)$coefficients[2,1]
+Knee_coef <- summary(Knee_lm)$coefficients[2,1]
+Ankle_coef <- summary(Ankle_lm)$coefficients[2,1]
+Biceps_coef <- summary(Biceps_lm)$coefficients[2,1]
+Forearm_coef <- summary(Forearm_lm)$coefficients[2,1]
+Wrist_coef <- summary(Wrist_lm)$coefficients[2,1]
+
+# CI Lower bound
+Age_cil <- confint(Age_lm)[2,1]
+Weight_cil <- confint(Weight_lm)[2,1]
+Height_cil <- confint(Height_lm)[2,1] 
+Neck_cil <- confint(Neck_lm)[2,1]
+Chest_cil <- confint(Chest_lm)[2,1]
+Abdomen_cil <- confint(Abdomen_lm)[2,1]
+Hip_cil <- confint(Hip_lm)[2,1]
+Thigh_cil <- confint(Thigh_lm)[2,1]
+Knee_cil <- confint(Knee_lm)[2,1]
+Ankle_cil <- confint(Ankle_lm)[2,1]
+Biceps_cil <- confint(Biceps_lm)[2,1]
+Forearm_cil <- confint(Forearm_lm)[2,1]
+Wrist_cil <- confint(Wrist_lm)[2,1]
+
+# CI Upper bound
+Age_ciu <- confint(Age_lm)[2,2]
+Weight_ciu <- confint(Weight_lm)[2,2]
+Height_ciu <- confint(Height_lm)[2,2] 
+Neck_ciu <- confint(Neck_lm)[2,2]
+Chest_ciu <- confint(Chest_lm)[2,2]
+Abdomen_ciu <- confint(Abdomen_lm)[2,2]
+Hip_ciu <- confint(Hip_lm)[2,2]
+Thigh_ciu <- confint(Thigh_lm)[2,2]
+Knee_ciu <- confint(Knee_lm)[2,2]
+Ankle_ciu <- confint(Ankle_lm)[2,2]
+Biceps_ciu <- confint(Biceps_lm)[2,2]
+Forearm_ciu <- confint(Forearm_lm)[2,2]
+Wrist_ciu <- confint(Wrist_lm)[2,2]
+
+# Univariate LM Metrics
+pvals <- c(Age_pval,
+           Weight_pval,
+           Height_pval,
+           Neck_pval,
+           Chest_pval,
+           Abdomen_pval,
+           Hip_pval,
+           Thigh_pval,
+           Knee_pval,
+           Ankle_pval,
+           Biceps_pval,
+           Forearm_pval,
+           Wrist_pval)
+
+rsqs <- c(Age_rsq,
+          Weight_rsq,
+          Height_rsq,
+          Neck_rsp, 
+          Chest_rsp,
+          Abdomen_rsq,
+          Hip_rsq,
+          Thigh_rsq,
+          Knee_rsq,
+          Ankle_rsq,
+          Biceps_rsq,
+          Forearm_rsq,
+          Wrist_rsq)
+
+coef <- c(Age_coef,
+          Weight_coef,
+          Height_coef,
+          Neck_coef,
+          Chest_coef,
+          Abdomen_coef,
+          Hip_coef,
+          Thigh_coef,
+          Knee_coef,
+          Ankle_coef,
+          Biceps_coef,
+          Forearm_coef,
+          Wrist_coef)
+
+cil <- c(Age_cil,
+         Weight_cil,
+         Height_cil,
+         Neck_cil,
+         Chest_cil,
+         Abdomen_cil,
+         Hip_cil,
+         Thigh_cil,
+         Knee_cil,
+         Ankle_cil,
+         Biceps_cil,
+         Forearm_cil,
+         Wrist_cil)
+
+ciu <- c(Age_ciu,
+         Weight_ciu,
+         Height_ciu, 
+         Neck_ciu,
+         Chest_ciu,
+         Abdomen_ciu,
+         Hip_ciu,
+         Thigh_ciu,
+         Knee_ciu,
+         Ankle_ciu,
+         Biceps_ciu,
+         Forearm_ciu,
+         Wrist_ciu)
+
+ci <- paste0(round(coef, 2), " (", round(cil, 2), ", ", round(ciu, 2), ")")
+
+vars <- names(df_train[,2:14])
+
+# Plotting Data Frame
+plot_df <- data.frame(vars, coef, cil, ciu)
+plot_df$vars <- as.factor(plot_df$vars)
+
+confint_plt <- plot_df %>%
+               ggplot(aes(x = vars, y = coef)) +
+               geom_errorbar(aes(ymax = ciu, ymin = cil), color = wes_palette("Rushmore1")[3]) +
+               geom_point(color = wes_palette("Royal1")[2], size = 2) +
+               geom_hline(yintercept = 0, linetype = "dashed", alpha = 0.5) +
+               theme_minimal() +
+               coord_flip() +
+               labs(title = "Coefficients from Univariate Linear Models",
+                    x = "",
+                    y = "")  
+confint_plt
+```
+```{r, echo = FALSE, warning = FALSE, message = FALSE, error = FALSE, fig.dim = c(8, 6)}
+plt_table <- data.frame(vars, pvals, rsqs, ci)
+colnames(plt_table) <- c("Variable", "p", "R-squared", "95% CI") 
+plt_table <- ggtexttable(plt_table, rows = NULL, theme = ttheme("light"))
+plt_table
+```
+
+## Feature Creation
+
+```{r, warning = FALSE, message = FALSE, error = FALSE, fig.dim = c(8, 6)}
+df_train$BMI_crude <- (df_train$Weight * 0.453592) / ((df_train$Height * 2.54)/100)^2 # needed to do unit conversions
+BMI_crude_lm <- lm(BodyFat ~ BMI_crude, data = df_train)
+BMI_crude_pval <- summary(BMI_crude_lm)$coefficients[2,4]
+BMI_crude_rsq <- summary(BMI_crude_lm)$r.squared
+
+df_train$chab <- df_train$Chest / df_train$Abdomen
+chab_lm <- lm(BodyFat ~ chab, data = df_train)
+chab_pval <- summary(chab_lm)$coefficients[2,4]
+chab_rsq <- summary(chab_lm)$r.squared
+
+# Remove the new features so that they are created within the recipe step later
+df_train <- df_train %>% select(-c(BMI_crude, chab))
+```
+
+# Training
+
+Given the high correlation between many of the features and the limited size of the data set I decided to fit a linear regression model with
+LASSO shrinkage. The LASSO can shrink parameter coefficients down to zero, and for this reason I did not remove any features in highly correlated
+pairs prior to fitting. I tune the pentalty parameter through cross validation. This parameter controls how extreme the shrinkage will be. 
+
+## Recipe
+
+
+```{r, warning = FALSE, message = FALSE, error = FALSE, fig.dim = c(8, 6)}
+df_recipe <- 
+    recipe(BodyFat ~. , data = df_train) %>%
+    step_zv(all_predictors()) %>%
+    step_mutate(BMI_crude = (Weight * 0.453592) / ((Height * 2.54)/100)^2,
+                chab = Chest / Abdomen) %>%
+    step_filter(Weight <= median(Weight) + 3*sd(Weight)) %>%
+    step_log(Chest, Abdomen) %>%
+    step_normalize(all_predictors())
+```
+
+## Tuning 
+ 
+
+```{r, warning = FALSE, message = FALSE, error = FALSE, fig.dim = c(8, 6)}
+
+# Lasso Regression: tune the penalty
+lasso_spec <- linear_reg(penalty = tune(), mixture = 1) %>% set_engine("glmnet")
+
+# Define hyperparameter grid
+lasso_grid <- grid_regular(penalty(), levels = 50)
+
+# Add to workflow
+lasso_workflow <- workflow() %>% add_recipe(df_recipe) %>% add_model(lasso_spec)
+
+# Tuning
+set.seed(19970507)
+
+lasso_cv <- tune_grid(lasso_workflow,
+                      resamples = cv_folds,
+                      grid = lasso_grid,
+                      control = control_grid(save_pred = TRUE))
+
+# Collect predictions and visualize the results
+lasso_cv %>% collect_metrics() %>%
+             ggplot(aes(penalty, mean, color = .metric)) +
+             geom_errorbar(aes(ymin = mean - std_err, ymax = mean + std_err), alpha = 0.5) +
+             geom_line(size = 1.5) +
+             facet_wrap(~.metric, scales = "free", nrow = 2) +
+             scale_x_log10() +
+             theme(legend.position = "none") +
+             theme_minimal()
+
+# Which penalty gave the best rsq and rmse? Same one for both: penalty = 0.244
+show_best(lasso_cv, "rmse")
+show_best(lasso_cv, "rsq")
+
+# Finalize workflow
+lasso_best <- select_best(lasso_cv, "rmse")
+
+final_lasso_workflow <- finalize_workflow(lasso_workflow, 
+                                          lasso_best)
+```
+
+# Testing
+
+
+```{r, warning = FALSE, message = FALSE, error = FALSE, fig.dim = c(8, 6)}
+set.seed(07051997)
+
+final_lasso_fit <- last_fit(final_lasso_workflow, df_split)
+
+lasso_metrics <- collect_metrics(final_lasso_fit)
+lasso_metrics
+```
+
+# Comparison to Density model
+
+```{r, warning = FALSE, message = FALSE, error = FALSE, fig.dim = c(8, 6)}
+lm_spec <- linear_reg() %>% set_engine("lm") %>% set_mode("regression")
+
+lm_workflow <- workflow() %>% add_recipe(df_recipe) %>% add_model(lm_spec)
+
+final_lm_workflow <- finalize_workflow(lm_workflow, lm_spec)
+
+lm_fit <- last_fit(final_lm_workflow, df_split)
+
+lm_metrics <- collect_metrics(lm_fit)
+lm_metrics
+```
